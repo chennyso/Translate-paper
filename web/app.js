@@ -1,0 +1,428 @@
+const state = {
+  jobId: null,
+  job: null,
+  activeId: null,
+  currentPage: 1,
+  pollTimer: null,
+  viewMode: "both",
+};
+
+const els = {
+  configText: document.querySelector("#configText"),
+  fileInput: document.querySelector("#fileInput"),
+  heroFileInput: document.querySelector("#heroFileInput"),
+  autoTranslateInput: document.querySelector("#autoTranslateInput"),
+  translatePageButton: document.querySelector("#translatePageButton"),
+  translateAllButton: document.querySelector("#translateAllButton"),
+  retryButton: document.querySelector("#retryButton"),
+  exportButton: document.querySelector("#exportButton"),
+  copyActiveButton: document.querySelector("#copyActiveButton"),
+  emptyState: document.querySelector("#emptyState"),
+  workspace: document.querySelector("#workspace"),
+  fileName: document.querySelector("#fileName"),
+  statusText: document.querySelector("#statusText"),
+  progressBar: document.querySelector("#progressBar"),
+  progressText: document.querySelector("#progressText"),
+  currentPageText: document.querySelector("#currentPageText"),
+  searchInput: document.querySelector("#searchInput"),
+  pageList: document.querySelector("#pageList"),
+  pdfView: document.querySelector("#pdfView"),
+  translationList: document.querySelector("#translationList"),
+  countText: document.querySelector("#countText"),
+  toast: document.querySelector("#toast"),
+  prevPageButton: document.querySelector("#prevPageButton"),
+  nextPageButton: document.querySelector("#nextPageButton"),
+  modeBoth: document.querySelector("#modeBoth"),
+  modeOriginal: document.querySelector("#modeOriginal"),
+  modeTranslation: document.querySelector("#modeTranslation"),
+};
+
+function showToast(message) {
+  els.toast.textContent = message;
+  els.toast.classList.remove("hidden");
+  window.clearTimeout(showToast.timer);
+  showToast.timer = window.setTimeout(() => els.toast.classList.add("hidden"), 3600);
+}
+
+async function api(path, options = {}) {
+  const response = await fetch(path, options);
+  if (!response.ok) {
+    let detail = response.statusText;
+    try {
+      const data = await response.json();
+      detail = data.detail || detail;
+    } catch {
+      detail = await response.text();
+    }
+    throw new Error(detail);
+  }
+  return response.json();
+}
+
+async function loadConfig() {
+  try {
+    const config = await api("/api/config");
+    const keyText = config.has_key ? "Key 已配置" : "Key 未配置";
+    els.configText.textContent = `${config.model} · ${keyText} · ${config.base_url}`;
+    if (!config.has_key) showToast("请先在 .env 中配置 LLM_API_KEY");
+  } catch {
+    els.configText.textContent = "配置读取失败";
+  }
+}
+
+async function uploadFile(file, autoTranslate = true) {
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith(".pdf")) {
+    showToast("请上传 PDF 文件");
+    return;
+  }
+
+  resetWorkspace(file.name);
+  const form = new FormData();
+  form.append("file", file);
+  form.append("auto_translate", String(autoTranslate));
+
+  try {
+    const result = await api("/api/jobs", { method: "POST", body: form });
+    state.jobId = result.job_id;
+    window.history.replaceState(null, "", `#${state.jobId}`);
+    await refreshJob();
+    startPollingIfNeeded();
+  } catch (error) {
+    setStatus("error", 0, 1);
+    showToast(error.message);
+  }
+}
+
+function resetWorkspace(fileName) {
+  clearPoll();
+  state.job = null;
+  state.activeId = null;
+  state.currentPage = 1;
+  setWorkspaceVisible(true);
+  setStatus("queued", 0, 1);
+  els.fileName.textContent = fileName;
+  els.pdfView.innerHTML = "";
+  els.translationList.innerHTML = "";
+  els.pageList.innerHTML = "";
+}
+
+function setWorkspaceVisible(visible) {
+  els.emptyState.classList.toggle("hidden", visible);
+  els.workspace.classList.toggle("hidden", !visible);
+}
+
+function setStatus(status, done, total) {
+  const names = {
+    ready: "可阅读",
+    queued: "排队中",
+    translating: "翻译中",
+    done: "已完成",
+    error: "出错",
+  };
+  els.statusText.textContent = names[status] || status;
+  const percent = total ? Math.round((done / total) * 100) : 0;
+  els.progressBar.style.width = `${Math.min(100, percent)}%`;
+  els.progressText.textContent = `${done} / ${total}`;
+}
+
+async function refreshJob() {
+  if (!state.jobId) return;
+  try {
+    const job = await api(`/api/jobs/${state.jobId}`);
+    state.job = job;
+    renderJob();
+    startPollingIfNeeded();
+    if (job.status === "error") showToast(job.error || "翻译失败");
+  } catch (error) {
+    clearPoll();
+    showToast(error.message);
+  }
+}
+
+function startPollingIfNeeded() {
+  if (!state.job) return;
+  const shouldPoll = state.job.status === "queued" || state.job.status === "translating";
+  if (shouldPoll && !state.pollTimer) {
+    state.pollTimer = window.setInterval(refreshJob, 1800);
+  }
+  if (!shouldPoll) clearPoll();
+}
+
+function clearPoll() {
+  if (state.pollTimer) {
+    window.clearInterval(state.pollTimer);
+    state.pollTimer = null;
+  }
+}
+
+function renderJob() {
+  const job = state.job;
+  setWorkspaceVisible(true);
+  els.fileName.textContent = job.filename;
+  setStatus(job.status, job.progress.done, job.progress.total);
+  els.countText.textContent = `${job.blocks.length} 段`;
+  els.currentPageText.textContent = `第 ${state.currentPage} 页`;
+  const busy = job.status === "queued" || job.status === "translating";
+  els.retryButton.disabled = busy;
+  els.translateAllButton.disabled = busy;
+  els.translatePageButton.disabled = busy;
+  els.copyActiveButton.disabled = !state.activeId;
+  els.exportButton.classList.toggle("disabled", !job.blocks.some((block) => block.translation));
+  els.exportButton.setAttribute("aria-disabled", String(!job.blocks.some((block) => block.translation)));
+  renderPages(job);
+  renderTranslations(job);
+  updatePageButtons();
+}
+
+function renderPages(job) {
+  if (els.pdfView.dataset.jobId === job.id) {
+    updatePageList();
+    updateHotspotState();
+    return;
+  }
+
+  els.pdfView.dataset.jobId = job.id;
+  els.pdfView.innerHTML = "";
+  els.pageList.innerHTML = "";
+
+  const blocksByPage = groupBlocksByPage(job.blocks);
+  for (const page of job.pages) {
+    const pageEl = document.createElement("article");
+    pageEl.className = "page";
+    pageEl.id = `page-${page.page}`;
+    pageEl.dataset.page = page.page;
+
+    const img = document.createElement("img");
+    img.src = page.image;
+    img.alt = `第 ${page.page} 页`;
+    pageEl.appendChild(img);
+
+    for (const block of blocksByPage.get(page.page) || []) {
+      const hotspot = document.createElement("button");
+      hotspot.type = "button";
+      hotspot.className = "hotspot";
+      hotspot.dataset.blockId = block.id;
+      hotspot.title = block.text.slice(0, 160);
+      positionHotspot(hotspot, block, page);
+      hotspot.addEventListener("click", () => focusBlock(block.id, "translation"));
+      pageEl.appendChild(hotspot);
+    }
+    els.pdfView.appendChild(pageEl);
+  }
+  updatePageList();
+}
+
+function groupBlocksByPage(blocks) {
+  const map = new Map();
+  for (const block of blocks) {
+    if (!map.has(block.page)) map.set(block.page, []);
+    map.get(block.page).push(block);
+  }
+  return map;
+}
+
+function updatePageList() {
+  const job = state.job;
+  els.pageList.innerHTML = "";
+  const pageStatus = new Map((job.page_status || []).map((item) => [item.page, item]));
+  for (const page of job.pages) {
+    const status = pageStatus.get(page.page) || { translated: 0, total: 0, done: false };
+    const button = document.createElement("button");
+    button.className = "pageChip";
+    button.type = "button";
+    button.dataset.page = page.page;
+    button.classList.toggle("active", page.page === state.currentPage);
+    button.classList.toggle("done", status.done);
+    button.innerHTML = `<span>第 ${page.page} 页</span><span>${status.translated}/${status.total}</span>`;
+    button.addEventListener("click", () => scrollToPage(page.page));
+    els.pageList.appendChild(button);
+  }
+}
+
+function positionHotspot(el, block, page) {
+  const [x0, y0, x1, y1] = block.bbox;
+  el.style.left = `${(x0 / page.width) * 100}%`;
+  el.style.top = `${(y0 / page.height) * 100}%`;
+  el.style.width = `${((x1 - x0) / page.width) * 100}%`;
+  el.style.height = `${((y1 - y0) / page.height) * 100}%`;
+}
+
+function renderTranslations(job) {
+  const query = els.searchInput.value.trim().toLowerCase();
+  const html = [];
+  for (const block of job.blocks) {
+    const combined = `${block.text} ${block.translation}`.toLowerCase();
+    if (query && !combined.includes(query)) continue;
+    const translated = block.translation || "等待翻译。可以点击左侧页面或使用“翻译当前页”。";
+    const pendingClass = block.translation ? "" : " pending";
+    html.push(`
+      <article class="translationBlock${state.activeId === block.id ? " active" : ""}" data-block-id="${escapeHtml(block.id)}" data-page="${block.page}">
+        <div class="blockMeta">
+          <span>Page ${block.page} · Block ${block.index + 1}</span>
+          <div class="blockActions">
+            <button type="button" data-action="copy" title="复制译文">复制</button>
+            <button type="button" data-action="jump" title="定位原文">定位</button>
+          </div>
+        </div>
+        <p class="sourceText">${escapeHtml(block.text)}</p>
+        <p class="translatedText${pendingClass}">${escapeHtml(translated)}</p>
+      </article>
+    `);
+  }
+  els.translationList.innerHTML = html.join("");
+  for (const item of els.translationList.querySelectorAll(".translationBlock")) {
+    item.addEventListener("click", (event) => {
+      const action = event.target?.dataset?.action;
+      if (action === "copy") {
+        event.stopPropagation();
+        copyBlock(item.dataset.blockId);
+        return;
+      }
+      focusBlock(item.dataset.blockId, action === "jump" ? "pdf" : "pdf");
+    });
+  }
+  updateHotspotState();
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function focusBlock(blockId, target) {
+  state.activeId = blockId;
+  const block = state.job?.blocks.find((item) => item.id === blockId);
+  if (block) state.currentPage = block.page;
+  els.currentPageText.textContent = `第 ${state.currentPage} 页`;
+  updatePageList();
+  updateHotspotState();
+
+  const translation = els.translationList.querySelector(`[data-block-id="${CSS.escape(blockId)}"]`);
+  const hotspot = els.pdfView.querySelector(`.hotspot[data-block-id="${CSS.escape(blockId)}"]`);
+  if (target === "translation" && translation) {
+    translation.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+  if (target === "pdf" && hotspot) {
+    hotspot.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+}
+
+function updateHotspotState() {
+  for (const hotspot of els.pdfView.querySelectorAll(".hotspot")) {
+    hotspot.classList.toggle("active", hotspot.dataset.blockId === state.activeId);
+  }
+  for (const item of els.translationList.querySelectorAll(".translationBlock")) {
+    item.classList.toggle("active", item.dataset.blockId === state.activeId);
+  }
+  els.copyActiveButton.disabled = !state.activeId;
+}
+
+function scrollToPage(page) {
+  state.currentPage = Number(page);
+  document.querySelector(`#page-${page}`)?.scrollIntoView({ block: "start", behavior: "smooth" });
+  els.currentPageText.textContent = `第 ${state.currentPage} 页`;
+  updatePageList();
+  updatePageButtons();
+}
+
+function updatePageButtons() {
+  const maxPage = state.job?.pages.length || 1;
+  els.prevPageButton.disabled = state.currentPage <= 1;
+  els.nextPageButton.disabled = state.currentPage >= maxPage;
+}
+
+async function translatePages(pages = null) {
+  if (!state.jobId) return;
+  try {
+    await api(`/api/jobs/${state.jobId}/translate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(pages ? { pages } : {}),
+    });
+    await refreshJob();
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function retryJob() {
+  if (!state.jobId) return;
+  try {
+    await api(`/api/jobs/${state.jobId}/retry`, { method: "POST" });
+    await refreshJob();
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+function setViewMode(mode) {
+  state.viewMode = mode;
+  document.body.dataset.viewMode = mode;
+  els.modeBoth.classList.toggle("active", mode === "both");
+  els.modeOriginal.classList.toggle("active", mode === "original");
+  els.modeTranslation.classList.toggle("active", mode === "translation");
+}
+
+async function copyBlock(blockId) {
+  const block = state.job?.blocks.find((item) => item.id === blockId);
+  if (!block) return;
+  const text = block.translation || block.text;
+  await navigator.clipboard.writeText(text);
+  showToast("已复制");
+}
+
+function exportMarkdown() {
+  if (!state.job) return;
+  const lines = [`# ${state.job.filename}`, ""];
+  for (const block of state.job.blocks) {
+    if (!block.translation) continue;
+    lines.push(`## Page ${block.page} · ${block.id}`, "", block.text, "", block.translation, "");
+  }
+  const blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${state.job.filename.replace(/\.pdf$/i, "")}.translated.md`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function bindEvents() {
+  els.fileInput.addEventListener("change", (event) => uploadFile(event.target.files[0], true));
+  els.heroFileInput.addEventListener("change", (event) => uploadFile(event.target.files[0], els.autoTranslateInput.checked));
+  els.translatePageButton.addEventListener("click", () => translatePages([state.currentPage]));
+  els.translateAllButton.addEventListener("click", () => translatePages());
+  els.retryButton.addEventListener("click", retryJob);
+  els.copyActiveButton.addEventListener("click", () => copyBlock(state.activeId));
+  els.exportButton.addEventListener("click", (event) => {
+    event.preventDefault();
+    if (!els.exportButton.classList.contains("disabled")) exportMarkdown();
+  });
+  els.searchInput.addEventListener("input", () => state.job && renderTranslations(state.job));
+  els.prevPageButton.addEventListener("click", () => scrollToPage(Math.max(1, state.currentPage - 1)));
+  els.nextPageButton.addEventListener("click", () => scrollToPage(Math.min(state.job?.pages.length || 1, state.currentPage + 1)));
+  els.modeBoth.addEventListener("click", () => setViewMode("both"));
+  els.modeOriginal.addEventListener("click", () => setViewMode("original"));
+  els.modeTranslation.addEventListener("click", () => setViewMode("translation"));
+}
+
+async function restoreFromHash() {
+  const jobId = window.location.hash.replace("#", "").trim();
+  if (!jobId) return;
+  state.jobId = jobId;
+  try {
+    await refreshJob();
+  } catch {
+    state.jobId = null;
+  }
+}
+
+bindEvents();
+setViewMode("both");
+loadConfig();
+restoreFromHash();

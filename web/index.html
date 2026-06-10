@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Translate Paper</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <div class="mark">TP</div>
+        <div>
+          <h1>Translate Paper</h1>
+          <p id="configText">读取配置中...</p>
+        </div>
+      </div>
+
+      <div class="actions">
+        <div class="modeSwitch" role="group" aria-label="阅读模式">
+          <button id="modeBoth" class="active" type="button">对照</button>
+          <button id="modeOriginal" type="button">原文</button>
+          <button id="modeTranslation" type="button">译文</button>
+        </div>
+        <button id="translatePageButton" type="button" disabled>翻译当前页</button>
+        <button id="translateAllButton" type="button" disabled>翻译全文</button>
+        <button id="retryButton" type="button" disabled>重试</button>
+        <a id="exportButton" class="ghostLink disabled" href="#" aria-disabled="true">导出 MD</a>
+        <label class="uploadButton">
+          <input id="fileInput" type="file" accept="application/pdf" />
+          <span>上传 PDF</span>
+        </label>
+      </div>
+    </header>
+
+    <main class="appShell">
+      <section id="emptyState" class="emptyState">
+        <div class="emptyPanel">
+          <p class="eyebrow">Bilingual paper workspace</p>
+          <h2>舒服地读论文，而不是等整篇翻完</h2>
+          <p>上传 PDF 后可立即浏览原文，按当前页翻译，或直接翻译全文。原文热区和中文译文逐段对应，点击任意一边都能回到另一边。</p>
+          <div class="uploadRow">
+            <label class="primaryUpload">
+              <input id="heroFileInput" type="file" accept="application/pdf" />
+              <span>选择 PDF</span>
+            </label>
+            <label class="checkLine">
+              <input id="autoTranslateInput" type="checkbox" checked />
+              <span>上传后自动翻译全文</span>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <section id="workspace" class="workspace hidden">
+        <aside class="rail">
+          <div class="fileMeta">
+            <span id="fileName">未选择文件</span>
+            <strong id="statusText">待处理</strong>
+          </div>
+          <div class="progress">
+            <div id="progressBar"></div>
+          </div>
+          <div class="miniStats">
+            <span id="progressText">0 / 0</span>
+            <span id="currentPageText">第 1 页</span>
+          </div>
+          <input id="searchInput" class="search" type="search" placeholder="搜索原文或译文" />
+          <div class="railTitle">页面</div>
+          <div id="pageList" class="pageList"></div>
+        </aside>
+
+        <section class="reader">
+          <div class="pane originalPane">
+            <div class="paneHeader">
+              <span>原文 PDF</span>
+              <div class="paneActions">
+                <button id="prevPageButton" type="button">上一页</button>
+                <button id="nextPageButton" type="button">下一页</button>
+              </div>
+            </div>
+            <div id="pdfView" class="pdfView"></div>
+          </div>
+
+          <div class="pane translationPane">
+            <div class="paneHeader">
+              <span>中文译文</span>
+              <div class="paneActions">
+                <button id="copyActiveButton" type="button" disabled>复制当前段</button>
+                <span id="countText">0 段</span>
+              </div>
+            </div>
+            <div id="translationList" class="translationList"></div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <div id="toast" class="toast hidden"></div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
