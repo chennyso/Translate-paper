@@ -5,6 +5,7 @@ const state = {
   currentPage: 1,
   pollTimer: null,
   viewMode: "both",
+  syncLock: false,
 };
 
 const els = {
@@ -173,6 +174,7 @@ function renderJob() {
   renderPages(job);
   renderTranslationPages(job);
   updatePageButtons();
+  syncPaneHeights();
 }
 
 function renderPages(job) {
@@ -381,10 +383,10 @@ function focusBlock(blockId, target) {
   const translation = els.translationList.querySelector(`.translatedBlock[data-block-id="${CSS.escape(blockId)}"]`);
   const hotspot = els.pdfView.querySelector(`.hotspot[data-block-id="${CSS.escape(blockId)}"]`);
   if (target === "translation" && translation) {
-    translation.scrollIntoView({ block: "center", behavior: "smooth" });
+    scrollElementIntoPane(els.translationList, translation);
   }
   if (target === "pdf" && hotspot) {
-    hotspot.scrollIntoView({ block: "center", behavior: "smooth" });
+    scrollElementIntoPane(els.pdfView, hotspot);
   }
 }
 
@@ -403,10 +405,75 @@ function updateHotspotState() {
 
 function scrollToPage(page) {
   state.currentPage = Number(page);
-  document.querySelector(`#page-${page}`)?.scrollIntoView({ block: "start", behavior: "smooth" });
+  const sourcePage = document.querySelector(`#page-${page}`);
+  const translatedPage = document.querySelector(`#translation-page-${page}`);
+  if (sourcePage) scrollElementIntoPane(els.pdfView, sourcePage, "start");
+  if (translatedPage) scrollElementIntoPane(els.translationList, translatedPage, "start");
   els.currentPageText.textContent = `第 ${state.currentPage} 页`;
   updatePageList();
   updatePageButtons();
+}
+
+function scrollElementIntoPane(pane, element, block = "center") {
+  const paneRect = pane.getBoundingClientRect();
+  const elementRect = element.getBoundingClientRect();
+  const offset = elementRect.top - paneRect.top;
+  const target =
+    block === "start"
+      ? pane.scrollTop + offset - 16
+      : pane.scrollTop + offset - pane.clientHeight / 2 + elementRect.height / 2;
+  pane.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
+}
+
+function getPagePosition(pane, selector) {
+  const paneRect = pane.getBoundingClientRect();
+  const pages = [...pane.querySelectorAll(selector)];
+  let best = null;
+  for (const page of pages) {
+    const rect = page.getBoundingClientRect();
+    const distance = Math.abs(rect.top - paneRect.top - 16);
+    if (!best || distance < best.distance) {
+      const scrollInside = Math.max(0, paneRect.top + pane.scrollTop - rect.top);
+      const maxInside = Math.max(1, page.offsetHeight - pane.clientHeight);
+      best = {
+        page: Number(page.dataset.page),
+        ratio: Math.max(0, Math.min(1, scrollInside / maxInside)),
+        distance,
+      };
+    }
+  }
+  return best;
+}
+
+function syncScroll(sourcePane, targetPane, sourceSelector, targetSelector) {
+  if (state.syncLock || state.viewMode !== "both") return;
+  const pos = getPagePosition(sourcePane, sourceSelector);
+  if (!pos) return;
+  const targetPage = targetPane.querySelector(`${targetSelector}[data-page="${pos.page}"]`);
+  if (!targetPage) return;
+
+  state.syncLock = true;
+  const maxInside = Math.max(1, targetPage.offsetHeight - targetPane.clientHeight);
+  const targetTop = targetPage.offsetTop + maxInside * pos.ratio;
+  targetPane.scrollTop = Math.max(0, targetTop);
+  state.currentPage = pos.page;
+  els.currentPageText.textContent = `第 ${state.currentPage} 页`;
+  updatePageList();
+  updatePageButtons();
+  window.setTimeout(() => {
+    state.syncLock = false;
+  }, 80);
+}
+
+function syncPaneHeights() {
+  if (!state.job) return;
+  for (const page of state.job.pages) {
+    const sourcePage = document.querySelector(`#page-${page.page}`);
+    const translatedPage = document.querySelector(`#translation-page-${page.page}`);
+    if (sourcePage && translatedPage) {
+      translatedPage.style.minHeight = `${sourcePage.offsetHeight}px`;
+    }
+  }
 }
 
 function updatePageButtons() {
@@ -485,6 +552,11 @@ function bindEvents() {
   els.searchInput.addEventListener("input", () => state.job && updateTranslationTexts(state.job));
   els.prevPageButton.addEventListener("click", () => scrollToPage(Math.max(1, state.currentPage - 1)));
   els.nextPageButton.addEventListener("click", () => scrollToPage(Math.min(state.job?.pages.length || 1, state.currentPage + 1)));
+  els.pdfView.addEventListener("scroll", () => syncScroll(els.pdfView, els.translationList, ".page", ".translatedPage"));
+  els.translationList.addEventListener("scroll", () =>
+    syncScroll(els.translationList, els.pdfView, ".translatedPage", ".page")
+  );
+  window.addEventListener("resize", syncPaneHeights);
   els.modeBoth.addEventListener("click", () => setViewMode("both"));
   els.modeOriginal.addEventListener("click", () => setViewMode("original"));
   els.modeTranslation.addEventListener("click", () => setViewMode("translation"));
