@@ -10,6 +10,8 @@
 - 原文和译文点击联动，高亮对应块。
 - 支持上传后自动翻译全文，也支持先解析、阅读时按当前页翻译。
 - 页面级进度、全文重试、搜索、当前段复制和 Markdown 导出。
+- BabelDOC/pdf2zh-next 布局管线生成真正的双语 PDF，可在浏览器查看或下载。
+- 生成布局 PDF 时保护公式、图片和表格；表格文字默认不翻译，只翻译正文文本。
 - 翻译任务缓存，刷新页面不丢结果。
 - 支持 OpenAI 兼容 API Base URL 和模型配置。
 - 不把 API Key 写进代码，使用 `.env` 或环境变量。
@@ -28,17 +30,16 @@
 
 ```powershell
 cd E:\python\Translate-paper
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
 编辑 `.env`，填入你的 `LLM_API_KEY`。然后启动：
 
 ```powershell
-python run.py
+.\start.ps1
 ```
+
+`start.ps1` 会自动创建 `.venv`，安装 `uv`，并使用清华源安装依赖。
 
 浏览器打开：
 
@@ -60,4 +61,6 @@ LLM_API_KEY=你的KEY
 
 ## 使用建议
 
-论文页数很多时，建议取消“上传后自动翻译全文”，先解析 PDF，然后按当前页翻译。当前版本按文本块分批调用模型，便于稳定重试和对照定位。扫描版 PDF 没有可抽取文字时，需要先 OCR 后再上传。
+论文页数很多时，建议取消“上传后自动翻译全文”，先解析 PDF，然后按当前页翻译。当前版本按文本块分批调用模型，便于稳定重试和对照定位。
+
+如果要最终阅读版式，点击“生成双语 PDF”。这会调用 pdf2zh-next/BabelDOC 的 layout pipeline，第一次运行可能需要下载或加载版面模型，耗时会明显长于普通逐段翻译。扫描版 PDF 没有可抽取文字时，需要先 OCR 后再上传。

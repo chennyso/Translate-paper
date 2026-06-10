@@ -2,5 +2,6 @@ fastapi>=0.115,<0.136
 uvicorn[standard]>=0.34,<0.35
 python-multipart>=0.0.20,<0.1
 httpx>=0.28,<0.29
-pymupdf>=1.25,<1.26
+pymupdf>=1.24,<1.25.3
 python-dotenv>=1.0,<1.2
+pdf2zh-next>=2.8,<2.9

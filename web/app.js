@@ -15,6 +15,8 @@ const els = {
   autoTranslateInput: document.querySelector("#autoTranslateInput"),
   translatePageButton: document.querySelector("#translatePageButton"),
   translateAllButton: document.querySelector("#translateAllButton"),
+  layoutPdfButton: document.querySelector("#layoutPdfButton"),
+  viewLayoutPdfButton: document.querySelector("#viewLayoutPdfButton"),
   retryButton: document.querySelector("#retryButton"),
   exportButton: document.querySelector("#exportButton"),
   copyActiveButton: document.querySelector("#copyActiveButton"),
@@ -25,6 +27,7 @@ const els = {
   progressBar: document.querySelector("#progressBar"),
   progressText: document.querySelector("#progressText"),
   currentPageText: document.querySelector("#currentPageText"),
+  layoutPdfStatus: document.querySelector("#layoutPdfStatus"),
   searchInput: document.querySelector("#searchInput"),
   pageList: document.querySelector("#pageList"),
   pdfView: document.querySelector("#pdfView"),
@@ -106,6 +109,8 @@ function resetWorkspace(fileName) {
   els.pdfView.innerHTML = "";
   els.translationList.innerHTML = "";
   els.pageList.innerHTML = "";
+  els.layoutPdfStatus.textContent = "双语 PDF 未生成";
+  els.viewLayoutPdfButton.href = "#";
 }
 
 function setWorkspaceVisible(visible) {
@@ -143,7 +148,12 @@ async function refreshJob() {
 
 function startPollingIfNeeded() {
   if (!state.job) return;
-  const shouldPoll = state.job.status === "queued" || state.job.status === "translating";
+  const layoutStatus = state.job.layout_pdf?.status;
+  const shouldPoll =
+    state.job.status === "queued" ||
+    state.job.status === "translating" ||
+    layoutStatus === "queued" ||
+    layoutStatus === "running";
   if (shouldPoll && !state.pollTimer) {
     state.pollTimer = window.setInterval(refreshJob, 1800);
   }
@@ -165,15 +175,36 @@ function renderJob() {
   els.countText.textContent = `${job.blocks.length} 段`;
   els.currentPageText.textContent = `第 ${state.currentPage} 页`;
   const busy = job.status === "queued" || job.status === "translating";
+  const layout = job.layout_pdf || {};
+  const layoutBusy = layout.status === "queued" || layout.status === "running";
   els.retryButton.disabled = busy;
   els.translateAllButton.disabled = busy;
   els.translatePageButton.disabled = busy;
+  els.layoutPdfButton.disabled = layoutBusy;
   els.copyActiveButton.disabled = !state.activeId;
   els.exportButton.classList.toggle("disabled", !job.blocks.some((block) => block.translation));
   els.exportButton.setAttribute("aria-disabled", String(!job.blocks.some((block) => block.translation)));
+  updateLayoutPdfControls(layout);
   renderPages(job);
   renderTranslationPages(job);
   updatePageButtons();
+}
+
+function updateLayoutPdfControls(layout) {
+  const status = layout.status || "idle";
+  const canOpen = status === "done" && layout.dual_pdf;
+  const labels = {
+    idle: "双语 PDF 未生成",
+    queued: "双语 PDF 排队中",
+    running: `${layout.stage || "BabelDOC 生成中"} · ${Math.round(layout.progress || 0)}%`,
+    done: "双语 PDF 已生成",
+    error: `双语 PDF 失败：${layout.error || "未知错误"}`,
+  };
+  els.layoutPdfButton.textContent = status === "done" ? "重新生成双语 PDF" : "生成双语 PDF";
+  els.layoutPdfStatus.textContent = labels[status] || labels.idle;
+  els.viewLayoutPdfButton.classList.toggle("disabled", !canOpen);
+  els.viewLayoutPdfButton.setAttribute("aria-disabled", String(!canOpen));
+  els.viewLayoutPdfButton.href = canOpen ? `/api/jobs/${state.jobId}/layout-pdf/dual` : "#";
 }
 
 function renderPages(job) {
@@ -402,7 +433,8 @@ function syncScroll(sourcePane, targetPane, sourceSelector, targetSelector) {
   if (!targetPage) return;
 
   state.syncLock = true;
-  const targetTop = targetPage.offsetTop + 16;
+  const maxTargetInside = Math.max(1, targetPage.offsetHeight - targetPane.clientHeight);
+  const targetTop = targetPage.offsetTop + pos.ratio * maxTargetInside;
   targetPane.scrollTop = Math.max(0, targetTop);
   state.currentPage = pos.page;
   els.currentPageText.textContent = `第 ${state.currentPage} 页`;
@@ -411,6 +443,16 @@ function syncScroll(sourcePane, targetPane, sourceSelector, targetSelector) {
   window.setTimeout(() => {
     state.syncLock = false;
   }, 80);
+}
+
+async function startLayoutPdf() {
+  if (!state.jobId) return;
+  try {
+    await api(`/api/jobs/${state.jobId}/layout-pdf`, { method: "POST" });
+    await refreshJob();
+  } catch (error) {
+    showToast(error.message);
+  }
 }
 
 function syncPaneHeights() {
@@ -484,6 +526,7 @@ function bindEvents() {
   els.heroFileInput.addEventListener("change", (event) => uploadFile(event.target.files[0], els.autoTranslateInput.checked));
   els.translatePageButton.addEventListener("click", () => translatePages([state.currentPage]));
   els.translateAllButton.addEventListener("click", () => translatePages());
+  els.layoutPdfButton.addEventListener("click", startLayoutPdf);
   els.retryButton.addEventListener("click", retryJob);
   els.copyActiveButton.addEventListener("click", () => copyBlock(state.activeId));
   els.exportButton.addEventListener("click", (event) => {

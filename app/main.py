@@ -6,6 +6,7 @@ import re
 import shutil
 import uuid
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,13 @@ JOBS_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="Translate Paper", version="1.0.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+def env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
 
 
 @dataclass
@@ -63,6 +71,49 @@ def write_metadata(job_id: str, data: dict[str, Any]) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(path)
+
+
+def default_layout_pdf_state() -> dict[str, Any]:
+    return {
+        "status": "idle",
+        "progress": 0,
+        "stage": "",
+        "error": "",
+        "dual_pdf": "",
+        "mono_pdf": "",
+        "updated_at": "",
+    }
+
+
+def set_layout_pdf_state(job_id: str, **updates: Any) -> dict[str, Any]:
+    meta = read_metadata(job_id)
+    state = default_layout_pdf_state()
+    state.update(meta.get("layout_pdf") or {})
+    state.update(updates)
+    meta["layout_pdf"] = state
+    write_metadata(job_id, meta)
+    return state
+
+
+def stable_layout_pdf_path(job_id: str, kind: str) -> Path:
+    if kind not in {"dual", "mono"}:
+        raise HTTPException(status_code=404, detail="PDF 不存在")
+    return job_dir(job_id) / f"layout-{kind}.pdf"
+
+
+def copy_pdf_output(source: Any, target: Path) -> str:
+    if not source:
+        return ""
+    source_path = Path(str(source))
+    if not source_path.exists():
+        return ""
+    if source_path.resolve() != target.resolve():
+        shutil.copyfile(source_path, target)
+    return str(target)
+
+
+def now_iso() -> str:
+    return datetime.now().isoformat(timespec="seconds")
 
 
 def normalize_text(text: str) -> str:
@@ -309,6 +360,133 @@ async def translate_job(job_id: str, pages: list[int] | None = None) -> None:
         write_metadata(job_id, meta)
 
 
+def build_layout_settings(output_dir: Path) -> Any:
+    api_key = os.getenv("LLM_API_KEY", "").strip()
+    base_url = os.getenv("LLM_BASE_URL", "https://token-plan-cn.xiaomimimo.com/v1").rstrip("/")
+    model = os.getenv("LLM_MODEL", "mimo-v2.5-pro")
+    if not api_key:
+        raise RuntimeError("请先在 .env 或环境变量中设置 LLM_API_KEY")
+
+    try:
+        from pdf2zh_next.config.model import PDFSettings
+        from pdf2zh_next.config.model import SettingsModel
+        from pdf2zh_next.config.model import TranslationSettings
+        from pdf2zh_next.config.translate_engine_model import OpenAICompatibleSettings
+    except ImportError as exc:
+        raise RuntimeError("缺少 pdf2zh-next，请先运行 start.ps1 或 pip install -r requirements.txt") from exc
+
+    return SettingsModel(
+        report_interval=0.5,
+        translation=TranslationSettings(
+            lang_in=os.getenv("PDF2ZH_LANG_IN", "en"),
+            lang_out=os.getenv("PDF2ZH_LANG_OUT", "zh-CN"),
+            output=str(output_dir),
+            qps=env_int("PDF2ZH_QPS", 2),
+            pool_max_workers=env_int("PDF2ZH_WORKERS", 2),
+            no_auto_extract_glossary=True,
+        ),
+        pdf=PDFSettings(
+            no_mono=False,
+            no_dual=False,
+            watermark_output_mode="no_watermark",
+            translate_table_text=False,
+            figure_table_protection_threshold=0.95,
+            enhance_compatibility=True,
+            split_short_lines=True,
+        ),
+        translate_engine_settings=OpenAICompatibleSettings(
+            openai_compatible_model=model,
+            openai_compatible_base_url=base_url,
+            openai_compatible_api_key=api_key,
+            openai_compatible_timeout=os.getenv("PDF2ZH_TIMEOUT", "180"),
+            openai_compatible_temperature=os.getenv("PDF2ZH_TEMPERATURE", "0.2"),
+            openai_compatible_send_temperature=True,
+            openai_compatible_enable_json_mode=True,
+        ),
+    )
+
+
+async def generate_layout_pdf_job(job_id: str) -> None:
+    output_dir = job_dir(job_id) / "layout"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    source_pdf = job_dir(job_id) / "source.pdf"
+
+    set_layout_pdf_state(
+        job_id,
+        status="running",
+        progress=0,
+        stage="准备 BabelDOC 布局管线",
+        error="",
+        updated_at=now_iso(),
+    )
+
+    try:
+        from pdf2zh_next.high_level import do_translate_async_stream
+
+        settings = build_layout_settings(output_dir)
+        settings.validate_settings()
+        settings.basic.input_files = set()
+
+        async for event in do_translate_async_stream(settings, source_pdf):
+            event_type = event.get("type")
+            if event_type in {"progress_start", "progress_update", "progress_end"}:
+                progress = float(event.get("overall_progress") or 0)
+                stage = str(event.get("stage") or "处理中")
+                part_index = event.get("part_index")
+                total_parts = event.get("total_parts")
+                if part_index and total_parts:
+                    stage = f"{stage} ({part_index}/{total_parts})"
+                set_layout_pdf_state(
+                    job_id,
+                    status="running",
+                    progress=round(max(0, min(100, progress)), 1),
+                    stage=stage,
+                    updated_at=now_iso(),
+                )
+            elif event_type == "error":
+                message = str(event.get("error") or "BabelDOC 生成失败")
+                set_layout_pdf_state(
+                    job_id,
+                    status="error",
+                    error=message,
+                    stage=str(event.get("error_type") or "错误"),
+                    updated_at=now_iso(),
+                )
+                raise RuntimeError(message)
+            elif event_type == "finish":
+                result = event["translate_result"]
+                dual_source = getattr(result, "no_watermark_dual_pdf_path", None) or getattr(result, "dual_pdf_path", None)
+                mono_source = getattr(result, "no_watermark_mono_pdf_path", None) or getattr(result, "mono_pdf_path", None)
+                dual_pdf = copy_pdf_output(dual_source, stable_layout_pdf_path(job_id, "dual"))
+                mono_pdf = copy_pdf_output(mono_source, stable_layout_pdf_path(job_id, "mono"))
+                if not dual_pdf:
+                    raise RuntimeError("BabelDOC 没有生成双语 PDF")
+                set_layout_pdf_state(
+                    job_id,
+                    status="done",
+                    progress=100,
+                    stage="双语 PDF 已生成",
+                    error="",
+                    dual_pdf=dual_pdf,
+                    mono_pdf=mono_pdf,
+                    updated_at=now_iso(),
+                )
+                return
+
+        raise RuntimeError("BabelDOC 任务结束但没有返回完成事件")
+    except Exception as exc:
+        state = set_layout_pdf_state(
+            job_id,
+            status="error",
+            error=str(exc),
+            stage="生成失败",
+            updated_at=now_iso(),
+        )
+        if not state.get("dual_pdf"):
+            for kind in ("dual", "mono"):
+                stable_layout_pdf_path(job_id, kind).unlink(missing_ok=True)
+
+
 @app.get("/")
 async def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
@@ -361,6 +539,7 @@ async def create_job(
         "blocks": [asdict(block) for block in blocks],
         "active_pages": [],
         "progress": {"done": 0, "total": len(blocks)},
+        "layout_pdf": default_layout_pdf_state(),
     }
     meta["page_status"] = page_status(meta["blocks"], pages)
     write_metadata(job_id, meta)
@@ -410,6 +589,44 @@ async def translate_pages(
     write_metadata(job_id, meta)
     background_tasks.add_task(translate_job, job_id, requested_pages)
     return {"status": "queued"}
+
+
+@app.post("/api/jobs/{job_id}/layout-pdf")
+async def start_layout_pdf(job_id: str, background_tasks: BackgroundTasks) -> dict[str, Any]:
+    meta = read_metadata(job_id)
+    layout_state = default_layout_pdf_state()
+    layout_state.update(meta.get("layout_pdf") or {})
+    if layout_state["status"] in {"queued", "running"}:
+        raise HTTPException(status_code=409, detail="布局双语 PDF 正在生成")
+
+    for kind in ("dual", "mono"):
+        stable_layout_pdf_path(job_id, kind).unlink(missing_ok=True)
+    meta["layout_pdf"] = {
+        **default_layout_pdf_state(),
+        "status": "queued",
+        "stage": "等待启动 BabelDOC",
+        "updated_at": now_iso(),
+    }
+    write_metadata(job_id, meta)
+    background_tasks.add_task(generate_layout_pdf_job, job_id)
+    return meta["layout_pdf"]
+
+
+@app.get("/api/jobs/{job_id}/layout-pdf")
+async def get_layout_pdf_status(job_id: str) -> dict[str, Any]:
+    meta = read_metadata(job_id)
+    state = default_layout_pdf_state()
+    state.update(meta.get("layout_pdf") or {})
+    return state
+
+
+@app.get("/api/jobs/{job_id}/layout-pdf/{kind}")
+async def get_layout_pdf(job_id: str, kind: str) -> FileResponse:
+    path = stable_layout_pdf_path(job_id, kind)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="PDF 尚未生成")
+    filename = f"{read_metadata(job_id)['filename'].removesuffix('.pdf')}.{kind}.pdf"
+    return FileResponse(path, media_type="application/pdf", filename=filename, content_disposition_type="inline")
 
 
 @app.get("/api/jobs/{job_id}/pages/{image_name}")

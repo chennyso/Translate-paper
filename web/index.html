@@ -24,6 +24,8 @@
         </div>
         <button id="translatePageButton" type="button" disabled>翻译当前页</button>
         <button id="translateAllButton" type="button" disabled>翻译全文</button>
+        <button id="layoutPdfButton" type="button" disabled>生成双语 PDF</button>
+        <a id="viewLayoutPdfButton" class="ghostLink disabled" href="#" target="_blank" rel="noreferrer" aria-disabled="true">查看双语 PDF</a>
         <button id="retryButton" type="button" disabled>重试</button>
         <a id="exportButton" class="ghostLink disabled" href="#" aria-disabled="true">导出 MD</a>
         <label class="uploadButton">
@@ -66,6 +68,7 @@
             <span id="currentPageText">第 1 页</span>
           </div>
           <input id="searchInput" class="search" type="search" placeholder="搜索原文或译文" />
+          <div id="layoutPdfStatus" class="layoutPdfStatus">双语 PDF 未生成</div>
           <div class="railTitle">页面</div>
           <div id="pageList" class="pageList"></div>
         </aside>

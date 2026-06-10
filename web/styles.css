@@ -35,8 +35,8 @@ button {
   border: 1px solid var(--line);
   background: var(--panel);
   color: var(--ink);
-  height: 36px;
-  padding: 0 14px;
+  height: 34px;
+  padding: 0 12px;
   border-radius: 8px;
   cursor: pointer;
 }
@@ -50,12 +50,12 @@ button:disabled {
   position: sticky;
   top: 0;
   z-index: 20;
-  height: 72px;
+  height: 60px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 24px;
-  padding: 0 24px;
+  gap: 14px;
+  padding: 0 14px;
   border-bottom: 1px solid var(--line);
   background: rgba(246, 243, 238, 0.92);
   backdrop-filter: blur(14px);
@@ -64,13 +64,13 @@ button:disabled {
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
 }
 
 .mark {
-  width: 42px;
-  height: 42px;
+  width: 34px;
+  height: 34px;
   display: grid;
   place-items: center;
   border-radius: 8px;
@@ -82,7 +82,7 @@ button:disabled {
 
 h1 {
   margin: 0;
-  font-size: 18px;
+  font-size: 16px;
   line-height: 1.2;
 }
 
@@ -98,13 +98,14 @@ h1 {
 .actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  min-width: 0;
   flex-shrink: 0;
 }
 
 .modeSwitch {
   display: flex;
-  height: 36px;
+  height: 34px;
   padding: 3px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -112,9 +113,9 @@ h1 {
 }
 
 .modeSwitch button {
-  height: 28px;
+  height: 26px;
   border: 0;
-  padding: 0 10px;
+  padding: 0 9px;
   background: transparent;
 }
 
@@ -127,8 +128,8 @@ h1 {
 .primaryUpload {
   display: inline-grid;
   place-items: center;
-  height: 38px;
-  padding: 0 16px;
+  height: 34px;
+  padding: 0 14px;
   border-radius: 8px;
   background: var(--accent);
   color: #fff;
@@ -139,8 +140,8 @@ h1 {
 .ghostLink {
   display: inline-grid;
   place-items: center;
-  height: 36px;
-  padding: 0 12px;
+  height: 34px;
+  padding: 0 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   color: var(--ink);
@@ -160,7 +161,7 @@ h1 {
 }
 
 .appShell {
-  min-height: calc(100vh - 72px);
+  min-height: calc(100vh - 60px);
 }
 
 .hidden {
@@ -168,7 +169,7 @@ h1 {
 }
 
 .emptyState {
-  min-height: calc(100vh - 72px);
+  min-height: calc(100vh - 60px);
   display: grid;
   place-items: center;
   padding: 32px;
@@ -223,40 +224,40 @@ h1 {
 
 .workspace {
   display: grid;
-  grid-template-columns: 260px 1fr;
-  height: calc(100vh - 72px);
+  grid-template-columns: 150px minmax(0, 1fr);
+  height: calc(100vh - 60px);
 }
 
 .rail {
   border-right: 1px solid var(--line);
   background: #eee9df;
-  padding: 16px;
+  padding: 12px 10px;
   overflow: auto;
 }
 
 .fileMeta {
   display: grid;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: 6px;
+  margin-bottom: 10px;
 }
 
 .fileMeta span {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 11px;
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
 
 .fileMeta strong {
-  font-size: 18px;
+  font-size: 14px;
 }
 
 .progress {
-  height: 8px;
+  height: 6px;
   border-radius: 999px;
   background: rgba(29, 37, 39, 0.12);
   overflow: hidden;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
 
 .progress div {
@@ -267,19 +268,20 @@ h1 {
 }
 
 .miniStats {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 14px;
+  display: grid;
+  gap: 3px;
+  margin-bottom: 10px;
   color: var(--muted);
   font-size: 12px;
 }
 
 .search {
   width: 100%;
-  height: 38px;
+  height: 32px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 0 12px;
+  padding: 0 9px;
+  font-size: 12px;
   background: var(--panel);
   color: var(--ink);
   outline: none;
@@ -290,14 +292,26 @@ h1 {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
+.layoutPdfStatus {
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 253, 249, 0.66);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .pageList {
   display: grid;
-  gap: 8px;
-  margin-top: 16px;
+  gap: 5px;
+  margin-top: 10px;
 }
 
 .railTitle {
-  margin-top: 18px;
+  margin-top: 12px;
   color: var(--muted);
   font-size: 12px;
   font-weight: 800;
@@ -310,13 +324,14 @@ h1 {
   justify-content: space-between;
   align-items: center;
   width: 100%;
-  height: 34px;
-  padding: 0 10px;
+  height: 30px;
+  padding: 0 8px;
   border-radius: 8px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--ink);
   text-align: left;
+  font-size: 12px;
 }
 
 .pageChip.active {
@@ -332,7 +347,7 @@ h1 {
 .reader {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(420px, 1fr) minmax(420px, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   height: 100%;
 }
 
@@ -348,11 +363,11 @@ h1 {
 }
 
 .paneHeader {
-  height: 48px;
+  height: 42px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
+  padding: 0 12px;
   border-bottom: 1px solid var(--line);
   background: rgba(255, 253, 249, 0.78);
   color: var(--muted);
@@ -363,7 +378,7 @@ h1 {
 .paneActions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .paneActions button,
@@ -380,14 +395,14 @@ h1 {
 }
 
 .pdfView {
-  padding: 24px;
+  padding: 18px;
   background: #d8d3ca;
 }
 
 .page {
   position: relative;
-  width: min(100%, 860px);
-  margin: 0 auto 24px;
+  width: min(100%, 920px);
+  margin: 0 auto 18px;
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.16);
   background: white;
 }
@@ -417,15 +432,15 @@ h1 {
 }
 
 .translationList {
-  padding: 24px;
+  padding: 18px;
   background: #d8d3ca;
 }
 
 .translatedPage {
   position: relative;
-  width: min(100%, 860px);
+  width: min(100%, 920px);
   min-height: 0;
-  margin: 0 auto 24px;
+  margin: 0 auto 18px;
   padding: 0;
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.16);
   background: #fffdf8;
@@ -544,7 +559,7 @@ body[data-view-mode="translation"] .originalPane {
 @media (max-width: 980px) {
   .topbar {
     height: auto;
-    min-height: 72px;
+    min-height: 60px;
     align-items: flex-start;
     flex-direction: column;
     padding: 14px 16px;

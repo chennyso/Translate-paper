@@ -6,5 +6,9 @@ if (!(Test-Path ".\.venv\Scripts\python.exe")) {
     python -m venv .venv
 }
 
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+if (!(Test-Path ".\.venv\Scripts\uv.exe")) {
+    .\.venv\Scripts\python.exe -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple uv
+}
+
+.\.venv\Scripts\uv.exe pip install --index-url https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
 .\.venv\Scripts\python.exe run.py
