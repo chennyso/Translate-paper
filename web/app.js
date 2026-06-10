@@ -171,7 +171,7 @@ function renderJob() {
   els.exportButton.classList.toggle("disabled", !job.blocks.some((block) => block.translation));
   els.exportButton.setAttribute("aria-disabled", String(!job.blocks.some((block) => block.translation)));
   renderPages(job);
-  renderTranslations(job);
+  renderTranslationPages(job);
   updatePageButtons();
 }
 
@@ -248,39 +248,115 @@ function positionHotspot(el, block, page) {
   el.style.height = `${((y1 - y0) / page.height) * 100}%`;
 }
 
-function renderTranslations(job) {
-  const query = els.searchInput.value.trim().toLowerCase();
-  const html = [];
-  for (const block of job.blocks) {
-    const combined = `${block.text} ${block.translation}`.toLowerCase();
-    if (query && !combined.includes(query)) continue;
-    const translated = block.translation || "等待翻译。可以点击左侧页面或使用“翻译当前页”。";
-    const pendingClass = block.translation ? "" : " pending";
-    html.push(`
-      <article class="translationBlock${state.activeId === block.id ? " active" : ""}" data-block-id="${escapeHtml(block.id)}" data-page="${block.page}">
-        <div class="blockMeta">
-          <span>Page ${block.page} · Block ${block.index + 1}</span>
-          <div class="blockActions">
-            <button type="button" data-action="copy" title="复制译文">复制</button>
-            <button type="button" data-action="jump" title="定位原文">定位</button>
-          </div>
-        </div>
-        <p class="sourceText">${escapeHtml(block.text)}</p>
-        <p class="translatedText${pendingClass}">${escapeHtml(translated)}</p>
-      </article>
-    `);
+function renderTranslationPages(job) {
+  if (els.translationList.dataset.jobId === job.id) {
+    updateTranslationTexts(job);
+    updateHotspotState();
+    return;
   }
-  els.translationList.innerHTML = html.join("");
-  for (const item of els.translationList.querySelectorAll(".translationBlock")) {
-    item.addEventListener("click", (event) => {
-      const action = event.target?.dataset?.action;
-      if (action === "copy") {
-        event.stopPropagation();
-        copyBlock(item.dataset.blockId);
-        return;
-      }
-      focusBlock(item.dataset.blockId, action === "jump" ? "pdf" : "pdf");
-    });
+
+  els.translationList.dataset.jobId = job.id;
+  els.translationList.innerHTML = "";
+  const blocksByPage = groupBlocksByPage(job.blocks);
+
+  for (const page of job.pages) {
+    const pageEl = document.createElement("article");
+    pageEl.className = "translatedPage";
+    pageEl.id = `translation-page-${page.page}`;
+    pageEl.dataset.page = page.page;
+    pageEl.style.aspectRatio = `${page.width} / ${page.height}`;
+
+    const pageLabel = document.createElement("div");
+    pageLabel.className = "translatedPageLabel";
+    pageLabel.textContent = `Page ${page.page}`;
+    pageEl.appendChild(pageLabel);
+
+    const paperBody = document.createElement("div");
+    paperBody.className = "translatedPaperBody";
+    pageEl.appendChild(paperBody);
+
+    buildTranslatedPageLayout(paperBody, blocksByPage.get(page.page) || [], page);
+
+    els.translationList.appendChild(pageEl);
+  }
+
+  updateTranslationTexts(job);
+  updateHotspotState();
+}
+
+function buildTranslatedPageLayout(container, blocks, page) {
+  const wideLimit = page.width * 0.62;
+  const narrowBlocks = blocks.filter((block) => block.bbox[2] - block.bbox[0] < wideLimit);
+  const leftCount = narrowBlocks.filter((block) => (block.bbox[0] + block.bbox[2]) / 2 < page.width / 2).length;
+  const rightCount = narrowBlocks.length - leftCount;
+  const twoColumn = leftCount >= 2 && rightCount >= 2;
+
+  const fullFlow = document.createElement("div");
+  fullFlow.className = "translatedFlow";
+  container.appendChild(fullFlow);
+
+  if (!twoColumn) {
+    for (const block of blocks) fullFlow.appendChild(createTranslatedBlock(block));
+    return;
+  }
+
+  const fullBlocks = [];
+  const leftBlocks = [];
+  const rightBlocks = [];
+  for (const block of blocks) {
+    const width = block.bbox[2] - block.bbox[0];
+    const center = (block.bbox[0] + block.bbox[2]) / 2;
+    if (width >= wideLimit) {
+      fullBlocks.push(block);
+    } else if (center < page.width / 2) {
+      leftBlocks.push(block);
+    } else {
+      rightBlocks.push(block);
+    }
+  }
+
+  for (const block of fullBlocks.sort(byPagePosition)) fullFlow.appendChild(createTranslatedBlock(block, true));
+
+  const columns = document.createElement("div");
+  columns.className = "translatedColumns";
+  const leftColumn = document.createElement("div");
+  const rightColumn = document.createElement("div");
+  leftColumn.className = "translatedColumn";
+  rightColumn.className = "translatedColumn";
+  columns.append(leftColumn, rightColumn);
+  container.appendChild(columns);
+
+  for (const block of leftBlocks.sort(byPagePosition)) leftColumn.appendChild(createTranslatedBlock(block));
+  for (const block of rightBlocks.sort(byPagePosition)) rightColumn.appendChild(createTranslatedBlock(block));
+}
+
+function byPagePosition(a, b) {
+  return a.bbox[1] - b.bbox[1] || a.bbox[0] - b.bbox[0];
+}
+
+function createTranslatedBlock(block, wide = false) {
+  const blockEl = document.createElement("button");
+  blockEl.type = "button";
+  blockEl.className = `translatedBlock${wide ? " wide" : ""}`;
+  blockEl.dataset.blockId = block.id;
+  blockEl.dataset.page = block.page;
+  blockEl.title = block.text.slice(0, 160);
+  blockEl.addEventListener("click", () => focusBlock(block.id, "pdf"));
+  return blockEl;
+}
+
+function updateTranslationTexts(job) {
+  const query = els.searchInput.value.trim().toLowerCase();
+  for (const block of job.blocks) {
+    const blockEl = els.translationList.querySelector(`.translatedBlock[data-block-id="${CSS.escape(block.id)}"]`);
+    if (!blockEl) continue;
+    const combined = `${block.text} ${block.translation}`.toLowerCase();
+    blockEl.hidden = Boolean(query && !combined.includes(query));
+    blockEl.classList.toggle("pending", !block.translation);
+    blockEl.innerHTML = `
+      <span class="translatedBlockMeta">P${block.page} · ${block.index + 1}</span>
+      <span class="translatedBlockText">${escapeHtml(block.translation || "等待翻译")}</span>
+    `;
   }
   updateHotspotState();
 }
@@ -302,7 +378,7 @@ function focusBlock(blockId, target) {
   updatePageList();
   updateHotspotState();
 
-  const translation = els.translationList.querySelector(`[data-block-id="${CSS.escape(blockId)}"]`);
+  const translation = els.translationList.querySelector(`.translatedBlock[data-block-id="${CSS.escape(blockId)}"]`);
   const hotspot = els.pdfView.querySelector(`.hotspot[data-block-id="${CSS.escape(blockId)}"]`);
   if (target === "translation" && translation) {
     translation.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -317,6 +393,9 @@ function updateHotspotState() {
     hotspot.classList.toggle("active", hotspot.dataset.blockId === state.activeId);
   }
   for (const item of els.translationList.querySelectorAll(".translationBlock")) {
+    item.classList.toggle("active", item.dataset.blockId === state.activeId);
+  }
+  for (const item of els.translationList.querySelectorAll(".translatedBlock")) {
     item.classList.toggle("active", item.dataset.blockId === state.activeId);
   }
   els.copyActiveButton.disabled = !state.activeId;
@@ -403,7 +482,7 @@ function bindEvents() {
     event.preventDefault();
     if (!els.exportButton.classList.contains("disabled")) exportMarkdown();
   });
-  els.searchInput.addEventListener("input", () => state.job && renderTranslations(state.job));
+  els.searchInput.addEventListener("input", () => state.job && updateTranslationTexts(state.job));
   els.prevPageButton.addEventListener("click", () => scrollToPage(Math.max(1, state.currentPage - 1)));
   els.nextPageButton.addEventListener("click", () => scrollToPage(Math.min(state.job?.pages.length || 1, state.currentPage + 1)));
   els.modeBoth.addEventListener("click", () => setViewMode("both"));
