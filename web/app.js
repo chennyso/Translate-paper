@@ -265,17 +265,18 @@ function renderTranslationPages(job) {
     pageEl.className = "translatedPage";
     pageEl.id = `translation-page-${page.page}`;
     pageEl.dataset.page = page.page;
+    pageEl.style.aspectRatio = `${page.width} / ${page.height}`;
 
     const pageLabel = document.createElement("div");
     pageLabel.className = "translatedPageLabel";
     pageLabel.textContent = `Page ${page.page}`;
     pageEl.appendChild(pageLabel);
 
-    const paperBody = document.createElement("div");
-    paperBody.className = "translatedPaperBody";
-    pageEl.appendChild(paperBody);
-
-    buildTranslatedPageLayout(paperBody, blocksByPage.get(page.page) || [], page);
+    for (const block of blocksByPage.get(page.page) || []) {
+      const blockEl = createTranslatedBlock(block);
+      positionHotspot(blockEl, block, page);
+      pageEl.appendChild(blockEl);
+    }
 
     els.translationList.appendChild(pageEl);
   }
@@ -284,60 +285,10 @@ function renderTranslationPages(job) {
   updateHotspotState();
 }
 
-function buildTranslatedPageLayout(container, blocks, page) {
-  const wideLimit = page.width * 0.62;
-  const narrowBlocks = blocks.filter((block) => block.bbox[2] - block.bbox[0] < wideLimit);
-  const leftCount = narrowBlocks.filter((block) => (block.bbox[0] + block.bbox[2]) / 2 < page.width / 2).length;
-  const rightCount = narrowBlocks.length - leftCount;
-  const twoColumn = leftCount >= 2 && rightCount >= 2;
-
-  const fullFlow = document.createElement("div");
-  fullFlow.className = "translatedFlow";
-  container.appendChild(fullFlow);
-
-  if (!twoColumn) {
-    for (const block of blocks) fullFlow.appendChild(createTranslatedBlock(block));
-    return;
-  }
-
-  const fullBlocks = [];
-  const leftBlocks = [];
-  const rightBlocks = [];
-  for (const block of blocks) {
-    const width = block.bbox[2] - block.bbox[0];
-    const center = (block.bbox[0] + block.bbox[2]) / 2;
-    if (width >= wideLimit) {
-      fullBlocks.push(block);
-    } else if (center < page.width / 2) {
-      leftBlocks.push(block);
-    } else {
-      rightBlocks.push(block);
-    }
-  }
-
-  for (const block of fullBlocks.sort(byPagePosition)) fullFlow.appendChild(createTranslatedBlock(block, true));
-
-  const columns = document.createElement("div");
-  columns.className = "translatedColumns";
-  const leftColumn = document.createElement("div");
-  const rightColumn = document.createElement("div");
-  leftColumn.className = "translatedColumn";
-  rightColumn.className = "translatedColumn";
-  columns.append(leftColumn, rightColumn);
-  container.appendChild(columns);
-
-  for (const block of leftBlocks.sort(byPagePosition)) leftColumn.appendChild(createTranslatedBlock(block));
-  for (const block of rightBlocks.sort(byPagePosition)) rightColumn.appendChild(createTranslatedBlock(block));
-}
-
-function byPagePosition(a, b) {
-  return a.bbox[1] - b.bbox[1] || a.bbox[0] - b.bbox[0];
-}
-
-function createTranslatedBlock(block, wide = false) {
+function createTranslatedBlock(block) {
   const blockEl = document.createElement("button");
   blockEl.type = "button";
-  blockEl.className = `translatedBlock${wide ? " wide" : ""}`;
+  blockEl.className = "translatedBlock";
   blockEl.dataset.blockId = block.id;
   blockEl.dataset.page = block.page;
   blockEl.title = block.text.slice(0, 160);
