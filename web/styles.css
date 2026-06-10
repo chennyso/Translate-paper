@@ -332,7 +332,7 @@ h1 {
 .reader {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(420px, 1.05fr) minmax(360px, 0.95fr);
+  grid-template-columns: minmax(420px, 1fr) minmax(420px, 1fr);
   height: 100%;
 }
 

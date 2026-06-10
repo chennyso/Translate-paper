@@ -81,6 +81,50 @@ def is_noise(text: str) -> bool:
     return False
 
 
+def is_formula_like(text: str) -> bool:
+    compact = text.strip()
+    if not compact:
+        return True
+    math_chars = set("=<>±×÷∑∏√∞≈≠≤≥∂∆∇∫∈∉∩∪⊂⊃⊆⊇∀∃→←↔⇒⇔αβγδθλμνπρσφχψωΓΔΘΛΞΠΣΦΨΩ")
+    symbol_count = sum(1 for char in compact if char in math_chars)
+    operator_count = len(re.findall(r"(?<!\w)[+\-*/^=<>](?!\w)|[_{}]", compact))
+    alpha_words = re.findall(r"[A-Za-z]{3,}", compact)
+    if symbol_count + operator_count >= 4 and len(alpha_words) <= 8:
+        return True
+    if re.search(r"\b(eq\.?|equation)\s*\(?\d+", compact, re.I):
+        return False
+    if len(compact) < 120 and symbol_count + operator_count >= 3 and len(alpha_words) <= 4:
+        return True
+    return False
+
+
+def is_table_like(raw_text: str, clean: str) -> bool:
+    lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+    if len(lines) < 4:
+        return False
+    short_lines = sum(1 for line in lines if len(line) <= 24)
+    numeric_tokens = len(re.findall(r"\b\d+(?:\.\d+)?%?\b", raw_text))
+    alpha_words = len(re.findall(r"[A-Za-z]{3,}", clean))
+    columnish_lines = sum(1 for line in lines if len(re.split(r"\s{2,}|\t", line)) >= 3)
+    if columnish_lines >= 3:
+        return True
+    if short_lines / len(lines) > 0.65 and numeric_tokens >= 3:
+        return True
+    if len(lines) >= 8 and numeric_tokens > alpha_words * 0.45:
+        return True
+    return False
+
+
+def should_translate_block(raw_text: str, clean: str) -> bool:
+    if is_noise(clean):
+        return False
+    if is_table_like(raw_text, clean):
+        return False
+    if is_formula_like(clean):
+        return False
+    return True
+
+
 def extract_pdf(pdf_path: Path, output_dir: Path) -> tuple[list[dict[str, Any]], list[TextBlock]]:
     pages_dir = output_dir / "pages"
     pages_dir.mkdir(parents=True, exist_ok=True)
@@ -106,8 +150,9 @@ def extract_pdf(pdf_path: Path, output_dir: Path) -> tuple[list[dict[str, Any]],
         block_index = 0
         for raw in raw_blocks:
             x0, y0, x1, y1, text = raw[:5]
-            clean = normalize_text(str(text))
-            if is_noise(clean):
+            raw_text = str(text)
+            clean = normalize_text(raw_text)
+            if not should_translate_block(raw_text, clean):
                 continue
             blocks.append(
                 TextBlock(

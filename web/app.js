@@ -331,12 +331,12 @@ function focusBlock(blockId, target) {
 
   const translation = els.translationList.querySelector(`.translatedBlock[data-block-id="${CSS.escape(blockId)}"]`);
   const hotspot = els.pdfView.querySelector(`.hotspot[data-block-id="${CSS.escape(blockId)}"]`);
-  if (target === "translation" && translation) {
-    scrollElementIntoPane(els.translationList, translation);
-  }
-  if (target === "pdf" && hotspot) {
-    scrollElementIntoPane(els.pdfView, hotspot);
-  }
+  state.syncLock = true;
+  if (translation) scrollElementIntoPane(els.translationList, translation);
+  if (hotspot) scrollElementIntoPane(els.pdfView, hotspot);
+  window.setTimeout(() => {
+    state.syncLock = false;
+  }, 250);
 }
 
 function updateHotspotState() {
@@ -402,8 +402,7 @@ function syncScroll(sourcePane, targetPane, sourceSelector, targetSelector) {
   if (!targetPage) return;
 
   state.syncLock = true;
-  const maxInside = Math.max(1, targetPage.offsetHeight - targetPane.clientHeight);
-  const targetTop = targetPage.offsetTop + maxInside * pos.ratio;
+  const targetTop = targetPage.offsetTop + 16;
   targetPane.scrollTop = Math.max(0, targetTop);
   state.currentPage = pos.page;
   els.currentPageText.textContent = `第 ${state.currentPage} 页`;
