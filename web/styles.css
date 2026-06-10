@@ -425,10 +425,11 @@ h1 {
   position: relative;
   width: min(100%, 860px);
   min-height: 0;
-  margin: 0 auto 24px;
+  margin: 0 auto 30px;
   padding: 52px 46px 46px;
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.16);
   background: #fffdf8;
+  overflow: visible;
 }
 
 .translatedPageLabel {
@@ -443,7 +444,7 @@ h1 {
 }
 
 .translatedPaperBody {
-  min-height: 100%;
+  display: block;
 }
 
 .translatedFlow {
@@ -456,6 +457,7 @@ h1 {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 28px;
   margin-top: 12px;
+  align-items: start;
 }
 
 .translatedColumn {

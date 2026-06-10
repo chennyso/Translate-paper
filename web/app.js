@@ -174,7 +174,6 @@ function renderJob() {
   renderPages(job);
   renderTranslationPages(job);
   updatePageButtons();
-  syncPaneHeights();
 }
 
 function renderPages(job) {
@@ -266,7 +265,6 @@ function renderTranslationPages(job) {
     pageEl.className = "translatedPage";
     pageEl.id = `translation-page-${page.page}`;
     pageEl.dataset.page = page.page;
-    pageEl.style.aspectRatio = `${page.width} / ${page.height}`;
 
     const pageLabel = document.createElement("div");
     pageLabel.className = "translatedPageLabel";
@@ -466,14 +464,7 @@ function syncScroll(sourcePane, targetPane, sourceSelector, targetSelector) {
 }
 
 function syncPaneHeights() {
-  if (!state.job) return;
-  for (const page of state.job.pages) {
-    const sourcePage = document.querySelector(`#page-${page.page}`);
-    const translatedPage = document.querySelector(`#translation-page-${page.page}`);
-    if (sourcePage && translatedPage) {
-      translatedPage.style.minHeight = `${sourcePage.offsetHeight}px`;
-    }
-  }
+  // Translation pages use natural height so longer Chinese text never bleeds into the next page.
 }
 
 function updatePageButtons() {
