@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
+import time
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -14,7 +16,7 @@ import fitz
 import httpx
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Body, FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 
@@ -23,10 +25,22 @@ load_dotenv()
 ROOT = Path(__file__).resolve().parent.parent
 STORAGE_DIR = ROOT / "storage"
 JOBS_DIR = STORAGE_DIR / "jobs"
+LOGS_DIR = STORAGE_DIR / "logs"
 STATIC_DIR = ROOT / "web"
 MAX_FILE_SIZE = 80 * 1024 * 1024
 
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    handlers=[
+        logging.FileHandler(LOGS_DIR / "app.log", encoding="utf-8"),
+        logging.StreamHandler(),
+    ],
+)
+logger = logging.getLogger("translate-paper")
 
 app = FastAPI(title="Translate Paper", version="1.0.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -114,6 +128,15 @@ def copy_pdf_output(source: Any, target: Path) -> str:
 
 def now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+
+def append_job_log(job_id: str, message: str) -> None:
+    line = f"{now_iso()} {message}\n"
+    try:
+        with (job_dir(job_id) / "translation.log").open("a", encoding="utf-8") as handle:
+            handle.write(line)
+    except Exception:
+        logger.exception("failed to write job log for %s", job_id)
 
 
 def normalize_text(text: str) -> str:
@@ -244,13 +267,32 @@ def parse_json_object(content: str) -> dict[str, Any]:
     if content.startswith("```"):
         content = re.sub(r"^```(?:json)?\s*", "", content)
         content = re.sub(r"\s*```$", "", content)
-    match = re.search(r"\{.*\}", content, re.S)
-    if not match:
-        raise ValueError("模型没有返回 JSON")
-    return json.loads(match.group(0))
+    decoder = json.JSONDecoder()
+    parsed_objects: list[dict[str, Any]] = []
+
+    try:
+        parsed = json.loads(content)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    for match in re.finditer(r"\{", content):
+        try:
+            parsed, _ = decoder.raw_decode(content[match.start() :])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            parsed_objects.append(parsed)
+            if "translations" in parsed:
+                return parsed
+
+    if parsed_objects:
+        return parsed_objects[0]
+    raise ValueError("模型没有返回 JSON")
 
 
-async def translate_chunk(client: httpx.AsyncClient, blocks: list[dict[str, Any]]) -> dict[str, str]:
+async def translate_chunk(client: httpx.AsyncClient, blocks: list[dict[str, Any]], job_id: str = "") -> dict[str, str]:
     api_key = os.getenv("LLM_API_KEY", "").strip()
     base_url = os.getenv("LLM_BASE_URL", "https://token-plan-cn.xiaomimimo.com/v1").rstrip("/")
     model = os.getenv("LLM_MODEL", "mimo-v2.5-pro")
@@ -284,16 +326,52 @@ async def translate_chunk(client: httpx.AsyncClient, blocks: list[dict[str, Any]
 
     endpoint = f"{base_url}/chat/completions"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    response = await client.post(endpoint, headers=headers, json=payload, timeout=120)
+    block_ids = [str(item["id"]) for item in blocks]
+    char_count = sum(len(str(item.get("text", ""))) for item in blocks)
+    started = time.perf_counter()
+    if job_id:
+        append_job_log(job_id, f"LLM request start model={model} blocks={len(blocks)} chars={char_count} ids={block_ids[0]}..{block_ids[-1]}")
+    logger.info("LLM request start job=%s model=%s blocks=%s chars=%s", job_id or "-", model, len(blocks), char_count)
+
+    try:
+        response = await client.post(endpoint, headers=headers, json=payload, timeout=120)
+    except Exception as exc:
+        elapsed = time.perf_counter() - started
+        if job_id:
+            append_job_log(job_id, f"LLM request transport_error elapsed={elapsed:.1f}s error={exc}")
+        logger.exception("LLM request transport_error job=%s elapsed=%.1fs", job_id or "-", elapsed)
+        raise
+
     if response.status_code >= 400 and "response_format" in response.text:
         payload.pop("response_format", None)
+        if job_id:
+            append_job_log(job_id, f"LLM retry without response_format status={response.status_code}")
         response = await client.post(endpoint, headers=headers, json=payload, timeout=120)
+    elapsed = time.perf_counter() - started
+    if job_id:
+        append_job_log(job_id, f"LLM response status={response.status_code} elapsed={elapsed:.1f}s bytes={len(response.content)}")
+    logger.info("LLM response job=%s status=%s elapsed=%.1fs bytes=%s", job_id or "-", response.status_code, elapsed, len(response.content))
+    if response.status_code >= 400:
+        snippet = response.text[:500].replace("\n", " ")
+        if job_id:
+            append_job_log(job_id, f"LLM error status={response.status_code} body={snippet}")
     response.raise_for_status()
     data = response.json()
     content = data["choices"][0]["message"]["content"]
-    parsed = parse_json_object(content)
+    try:
+        parsed = parse_json_object(content)
+    except Exception as exc:
+        snippet = str(content)[:1000].replace("\n", "\\n")
+        if job_id:
+            append_job_log(job_id, f"LLM parse_error error={exc} content={snippet}")
+        logger.warning("LLM parse_error job=%s error=%s content=%s", job_id or "-", exc, snippet)
+        raise
     translations = parsed.get("translations", parsed)
-    return {str(key): str(value).strip() for key, value in translations.items()}
+    result = {str(key): str(value).strip() for key, value in translations.items()}
+    missing = [block_id for block_id in block_ids if block_id not in result]
+    if missing and job_id:
+        append_job_log(job_id, f"LLM missing translations count={len(missing)} ids={missing[:12]}")
+    return result
 
 
 def page_status(blocks: list[dict[str, Any]], pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -315,6 +393,7 @@ def page_status(blocks: list[dict[str, Any]], pages: list[dict[str, Any]]) -> li
 async def translate_job(job_id: str, pages: list[int] | None = None) -> None:
     meta = read_metadata(job_id)
     try:
+        append_job_log(job_id, f"job start pages={pages or 'all'}")
         meta["status"] = "translating"
         meta["error"] = ""
         meta["active_pages"] = pages or []
@@ -337,7 +416,7 @@ async def translate_job(job_id: str, pages: list[int] | None = None) -> None:
 
         async with httpx.AsyncClient() as client:
             for chunk in chunk_blocks(selected_blocks):
-                translations = await translate_chunk(client, chunk)
+                translations = await translate_chunk(client, chunk, job_id)
                 for block in blocks:
                     if block["id"] in translations:
                         block["translation"] = translations[block["id"]]
@@ -352,12 +431,15 @@ async def translate_job(job_id: str, pages: list[int] | None = None) -> None:
         meta["progress"] = {"done": len(selected_blocks), "total": len(selected_blocks)}
         meta["page_status"] = page_status(blocks, meta["pages"])
         write_metadata(job_id, meta)
+        append_job_log(job_id, f"job finish status={meta['status']} translated={sum(1 for block in blocks if block.get('translation'))}/{len(blocks)}")
     except Exception as exc:
         meta = read_metadata(job_id)
         meta["status"] = "error"
         meta["error"] = str(exc)
         meta["active_pages"] = []
         write_metadata(job_id, meta)
+        append_job_log(job_id, f"job error {type(exc).__name__}: {exc}")
+        logger.exception("translation job error job=%s", job_id)
 
 
 def build_layout_settings(output_dir: Path) -> Any:
@@ -627,6 +709,14 @@ async def get_layout_pdf(job_id: str, kind: str) -> FileResponse:
         raise HTTPException(status_code=404, detail="PDF 尚未生成")
     filename = f"{read_metadata(job_id)['filename'].removesuffix('.pdf')}.{kind}.pdf"
     return FileResponse(path, media_type="application/pdf", filename=filename, content_disposition_type="inline")
+
+
+@app.get("/api/jobs/{job_id}/logs")
+async def get_job_logs(job_id: str) -> PlainTextResponse:
+    path = job_dir(job_id) / "translation.log"
+    if not path.exists():
+        return PlainTextResponse("暂无翻译调用日志\n")
+    return PlainTextResponse(path.read_text(encoding="utf-8"))
 
 
 @app.get("/api/jobs/{job_id}/pages/{image_name}")
