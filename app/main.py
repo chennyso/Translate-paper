@@ -7,6 +7,7 @@ import re
 import shutil
 import time
 import uuid
+import asyncio
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -53,6 +54,16 @@ def env_int(name: str, default: int) -> int:
         return default
 
 
+def retry_after_seconds(response: httpx.Response) -> float | None:
+    value = response.headers.get("Retry-After", "").strip()
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        return None
+
+
 @dataclass
 class TextBlock:
     id: str
@@ -85,6 +96,53 @@ def write_metadata(job_id: str, data: dict[str, Any]) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(path)
+
+
+def summarize_job(meta: dict[str, Any]) -> dict[str, Any]:
+    blocks = meta.get("blocks") or []
+    translated = sum(1 for block in blocks if block.get("translation"))
+    pages = meta.get("pages") or []
+    layout_pdf = default_layout_pdf_state()
+    layout_pdf.update(meta.get("layout_pdf") or {})
+    pdf_path = job_dir(str(meta["id"])) / "source.pdf"
+    created_at = ""
+    if pdf_path.exists():
+        created_at = datetime.fromtimestamp(pdf_path.stat().st_mtime).isoformat(timespec="seconds")
+    return {
+        "id": meta["id"],
+        "filename": meta.get("filename", "未命名论文.pdf"),
+        "status": meta.get("status", "ready"),
+        "error": meta.get("error", ""),
+        "page_count": len(pages),
+        "block_count": len(blocks),
+        "translated_count": translated,
+        "progress": meta.get("progress") or {"done": 0, "total": len(blocks)},
+        "layout_pdf": {
+            "status": layout_pdf.get("status", "idle"),
+            "updated_at": layout_pdf.get("updated_at", ""),
+            "has_dual_pdf": bool(layout_pdf.get("dual_pdf")),
+        },
+        "created_at": created_at,
+    }
+
+
+def list_jobs() -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    if not JOBS_DIR.exists():
+        return items
+    for path in JOBS_DIR.iterdir():
+        if not path.is_dir():
+            continue
+        meta_path = path / "metadata.json"
+        if not meta_path.exists():
+            continue
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            items.append(summarize_job(meta))
+        except Exception:
+            logger.exception("failed to load job summary from %s", meta_path)
+    items.sort(key=lambda item: (item.get("created_at") or "", item["id"]), reverse=True)
+    return items
 
 
 def default_layout_pdf_state() -> dict[str, Any]:
@@ -332,25 +390,53 @@ async def translate_chunk(client: httpx.AsyncClient, blocks: list[dict[str, Any]
     if job_id:
         append_job_log(job_id, f"LLM request start model={model} blocks={len(blocks)} chars={char_count} ids={block_ids[0]}..{block_ids[-1]}")
     logger.info("LLM request start job=%s model=%s blocks=%s chars=%s", job_id or "-", model, len(blocks), char_count)
+    max_attempts = env_int("LLM_RETRY_ATTEMPTS", 4)
+    base_delay = max(1, env_int("LLM_RETRY_BASE_DELAY", 2))
+    response = None
 
-    try:
-        response = await client.post(endpoint, headers=headers, json=payload, timeout=120)
-    except Exception as exc:
+    for attempt in range(1, max_attempts + 1):
+        started = time.perf_counter()
+        try:
+            response = await client.post(endpoint, headers=headers, json=payload, timeout=120)
+        except Exception as exc:
+            elapsed = time.perf_counter() - started
+            if job_id:
+                append_job_log(job_id, f"LLM request transport_error attempt={attempt} elapsed={elapsed:.1f}s error={exc}")
+            logger.exception("LLM request transport_error job=%s attempt=%s elapsed=%.1fs", job_id or "-", attempt, elapsed)
+            raise
+
+        if response.status_code >= 400 and "response_format" in response.text:
+            payload.pop("response_format", None)
+            if job_id:
+                append_job_log(job_id, f"LLM retry without response_format status={response.status_code}")
+            response = await client.post(endpoint, headers=headers, json=payload, timeout=120)
+
         elapsed = time.perf_counter() - started
         if job_id:
-            append_job_log(job_id, f"LLM request transport_error elapsed={elapsed:.1f}s error={exc}")
-        logger.exception("LLM request transport_error job=%s elapsed=%.1fs", job_id or "-", elapsed)
-        raise
+            append_job_log(job_id, f"LLM response attempt={attempt} status={response.status_code} elapsed={elapsed:.1f}s bytes={len(response.content)}")
+        logger.info(
+            "LLM response job=%s attempt=%s status=%s elapsed=%.1fs bytes=%s",
+            job_id or "-",
+            attempt,
+            response.status_code,
+            elapsed,
+            len(response.content),
+        )
 
-    if response.status_code >= 400 and "response_format" in response.text:
-        payload.pop("response_format", None)
+        if response.status_code != 429:
+            break
+
+        if attempt >= max_attempts:
+            break
+
+        delay = retry_after_seconds(response) or float(base_delay * (2 ** (attempt - 1)))
         if job_id:
-            append_job_log(job_id, f"LLM retry without response_format status={response.status_code}")
-        response = await client.post(endpoint, headers=headers, json=payload, timeout=120)
-    elapsed = time.perf_counter() - started
-    if job_id:
-        append_job_log(job_id, f"LLM response status={response.status_code} elapsed={elapsed:.1f}s bytes={len(response.content)}")
-    logger.info("LLM response job=%s status=%s elapsed=%.1fs bytes=%s", job_id or "-", response.status_code, elapsed, len(response.content))
+            append_job_log(job_id, f"LLM rate_limit attempt={attempt} sleep={delay:.1f}s")
+        await asyncio.sleep(delay)
+
+    if response is None:
+        raise RuntimeError("LLM 请求未返回响应")
+
     if response.status_code >= 400:
         snippet = response.text[:500].replace("\n", " ")
         if job_id:
@@ -463,8 +549,8 @@ def build_layout_settings(output_dir: Path) -> Any:
             lang_in=os.getenv("PDF2ZH_LANG_IN", "en"),
             lang_out=os.getenv("PDF2ZH_LANG_OUT", "zh-CN"),
             output=str(output_dir),
-            qps=env_int("PDF2ZH_QPS", 2),
-            pool_max_workers=env_int("PDF2ZH_WORKERS", 2),
+            qps=env_int("PDF2ZH_QPS", 1),
+            pool_max_workers=env_int("PDF2ZH_WORKERS", 1),
             no_auto_extract_glossary=True,
         ),
         pdf=PDFSettings(
@@ -581,6 +667,11 @@ async def get_config() -> dict[str, Any]:
         "model": os.getenv("LLM_MODEL", "mimo-v2.5-pro"),
         "has_key": bool(os.getenv("LLM_API_KEY", "").strip()),
     }
+
+
+@app.get("/api/jobs")
+async def get_jobs() -> list[dict[str, Any]]:
+    return list_jobs()
 
 
 @app.post("/api/jobs")

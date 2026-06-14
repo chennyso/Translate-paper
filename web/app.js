@@ -1,6 +1,7 @@
 const state = {
   jobId: null,
   job: null,
+  jobs: [],
   activeId: null,
   currentPage: 1,
   pollTimer: null,
@@ -28,6 +29,7 @@ const els = {
   progressText: document.querySelector("#progressText"),
   currentPageText: document.querySelector("#currentPageText"),
   layoutPdfStatus: document.querySelector("#layoutPdfStatus"),
+  historyList: document.querySelector("#historyList"),
   searchInput: document.querySelector("#searchInput"),
   pageList: document.querySelector("#pageList"),
   pdfView: document.querySelector("#pdfView"),
@@ -74,6 +76,16 @@ async function loadConfig() {
   }
 }
 
+async function loadJobs() {
+  try {
+    state.jobs = await api("/api/jobs");
+    renderHistory();
+  } catch {
+    state.jobs = [];
+    renderHistory();
+  }
+}
+
 async function uploadFile(file, autoTranslate = true) {
   if (!file) return;
   if (!file.name.toLowerCase().endsWith(".pdf")) {
@@ -91,6 +103,7 @@ async function uploadFile(file, autoTranslate = true) {
     state.jobId = result.job_id;
     window.history.replaceState(null, "", `#${state.jobId}`);
     await refreshJob();
+    await loadJobs();
     startPollingIfNeeded();
   } catch (error) {
     setStatus("error", 0, 1);
@@ -138,6 +151,7 @@ async function refreshJob() {
     const job = await api(`/api/jobs/${state.jobId}`);
     state.job = job;
     renderJob();
+    renderHistory();
     startPollingIfNeeded();
     if (job.status === "error") showToast(job.error || "翻译失败");
   } catch (error) {
@@ -188,6 +202,67 @@ function renderJob() {
   renderPages(job);
   renderTranslationPages(job);
   updatePageButtons();
+}
+
+function renderHistory() {
+  const items = state.jobs || [];
+  els.historyList.innerHTML = "";
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "historyEmpty";
+    empty.textContent = "还没有历史论文";
+    els.historyList.appendChild(empty);
+    return;
+  }
+
+  for (const item of items) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "historyItem";
+    button.classList.toggle("active", item.id === state.jobId);
+    const translated = item.progress?.total ? `${item.translated_count}/${item.block_count}` : `${item.translated_count} 段`;
+    const created = formatTime(item.created_at);
+    button.innerHTML = `
+      <span class="historyName">${escapeHtml(item.filename.replace(/\.pdf$/i, ""))}</span>
+      <span class="historyMeta">${escapeHtml(statusLabel(item.status))} · ${translated}</span>
+      <span class="historyMeta">${escapeHtml(created)} · ${item.page_count} 页</span>
+    `;
+    button.addEventListener("click", () => openHistoryJob(item.id));
+    els.historyList.appendChild(button);
+  }
+}
+
+function statusLabel(status) {
+  const names = {
+    ready: "可阅读",
+    queued: "排队中",
+    translating: "翻译中",
+    done: "已完成",
+    error: "出错",
+  };
+  return names[status] || status;
+}
+
+function formatTime(value) {
+  if (!value) return "未知时间";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+async function openHistoryJob(jobId) {
+  if (!jobId || jobId === state.jobId) return;
+  clearPoll();
+  state.jobId = jobId;
+  state.activeId = null;
+  state.currentPage = 1;
+  window.history.replaceState(null, "", `#${state.jobId}`);
+  await refreshJob();
 }
 
 function updateLayoutPdfControls(layout) {
@@ -450,6 +525,7 @@ async function startLayoutPdf() {
   try {
     await api(`/api/jobs/${state.jobId}/layout-pdf`, { method: "POST" });
     await refreshJob();
+    await loadJobs();
   } catch (error) {
     showToast(error.message);
   }
@@ -474,6 +550,7 @@ async function translatePages(pages = null) {
       body: JSON.stringify(pages ? { pages } : {}),
     });
     await refreshJob();
+    await loadJobs();
   } catch (error) {
     showToast(error.message);
   }
@@ -484,6 +561,7 @@ async function retryJob() {
   try {
     await api(`/api/jobs/${state.jobId}/retry`, { method: "POST" });
     await refreshJob();
+    await loadJobs();
   } catch (error) {
     showToast(error.message);
   }
@@ -552,12 +630,18 @@ async function restoreFromHash() {
   state.jobId = jobId;
   try {
     await refreshJob();
+    if (!state.jobs.length) await loadJobs();
   } catch {
     state.jobId = null;
   }
 }
 
+async function initialize() {
+  await loadConfig();
+  await loadJobs();
+  await restoreFromHash();
+}
+
 bindEvents();
 setViewMode("both");
-loadConfig();
-restoreFromHash();
+initialize();

@@ -310,6 +310,44 @@ h1 {
   margin-top: 10px;
 }
 
+.historyList {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.historyItem {
+  width: 100%;
+  height: auto;
+  display: grid;
+  gap: 3px;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: rgba(255, 253, 249, 0.72);
+  text-align: left;
+}
+
+.historyItem:hover,
+.historyItem.active {
+  border-color: var(--accent);
+  background: #fffdf8;
+}
+
+.historyName {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.historyMeta,
+.historyEmpty {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .railTitle {
   margin-top: 12px;
   color: var(--muted);

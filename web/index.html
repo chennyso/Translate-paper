@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Translate Paper</title>
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260612-history" />
   </head>
   <body>
     <header class="topbar">
@@ -39,7 +39,7 @@
       <section id="emptyState" class="emptyState">
         <div class="emptyPanel">
           <p class="eyebrow">Bilingual paper workspace</p>
-          <h2>舒服地读论文，而不是等整篇翻完</h2>
+          <h2>在原文与译文之间，读懂一篇论文</h2>
           <p>上传 PDF 后可立即浏览原文，按当前页翻译，或直接翻译全文。原文热区和中文译文逐段对应，点击任意一边都能回到另一边。</p>
           <div class="uploadRow">
             <label class="primaryUpload">
@@ -69,6 +69,8 @@
           </div>
           <input id="searchInput" class="search" type="search" placeholder="搜索原文或译文" />
           <div id="layoutPdfStatus" class="layoutPdfStatus">双语 PDF 未生成</div>
+          <div class="railTitle">历史论文</div>
+          <div id="historyList" class="historyList"></div>
           <div class="railTitle">页面</div>
           <div id="pageList" class="pageList"></div>
         </aside>
@@ -100,6 +102,6 @@
     </main>
 
     <div id="toast" class="toast hidden"></div>
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=20260612-history"></script>
   </body>
 </html>
